@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Visor Workstation Container -->
+<div class="flex-grow flex flex-col h-[calc(100vh-80px)] overflow-hidden" 
+     id="visor-data"
+     data-image-id="{{ image.id }}"
+     data-image-url="{{ image_url }}"
+     data-image-status="{{ image.status }}"
+     x-data="{ 
+        imageId: {{ image.id }},
+        imageFile: '{{ image_url }}',
+        activeTool: 'draw', /* 'draw' or 'pan' */
+        isLoading: false,
+        loadingText: 'Loading...',
+        activeLineForChart: null,
+        status: '{{ image.status }}'
+     }">
+    
+    <!-- Workspace Header Bar -->
+    <header class="bg-brand-panel border-b border-brand-border/60 py-3 px-6 flex justify-between items-center shrink-0 shadow-md shadow-black/10">
+        <div class="flex items-center gap-4">
+            <a href="/" class="text-xs bg-slate-800 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
+                <i class="fa-solid fa-arrow-left"></i> Dashboard
+            </a>
+            <div class="h-5 w-px bg-brand-border"></div>
+            <div>
+                <h2 class="text-sm font-bold text-white tracking-tight flex items-center gap-2">
+                    {{ image.filename.split('_', 1)[-1] if '_' in image.filename else image.filename }}
+                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full border"
+                          :class="{
+                             'bg-slate-800 text-slate-400 border-slate-700': status === 'Pending Lines',
+                             'bg-emerald-950/80 text-brand-accent border-emerald-800': status === 'Optimized',
+                             'bg-blue-950/80 text-blue-400 border-blue-800': status === 'Report Generated'
+                          }" 
+                          x-text="status">
+                        {{ image.status }}
+                    </span>
+                </h2>
+                {% if image.gps_lat and image.gps_lon %}
+                <p class="text-[10px] text-slate-400 flex items-center gap-1">
+                    <i class="fa-solid fa-location-dot text-brand-accent"></i> Lat: {{ "%.5f"|format(image.gps_lat) }} | Lon: {{ "%.5f"|format(image.gps_lon) }} | Alt: {{ "%.1f"|format(image.gps_alt or 0) }}m
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Export Center Buttons -->
+        <div class="flex items-center gap-3">
+            <a :href="'/image/' + imageId + '/report'" class="text-xs bg-blue-600 hover:bg-blue-500 border border-blue-500/20 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-blue-500/10 hover:shadow-blue-500/25 transition-all">
+                <i class="fa-solid fa-file-pdf"></i> Standalone Report
+            </a>
+            <button id="btn-export-session" class="text-xs bg-slate-800 border border-slate-700 hover:border-slate-500 hover:text-white px-3 py-1.5 rounded-lg text-slate-300 font-semibold flex items-center gap-1.5 transition-all">
+                <i class="fa-solid fa-file-export text-slate-400"></i> Backup JSON
+            </button>
+        </div>
+    </header>
+
+    <!-- Split Screen: Left Canvas, Right Control Sidepanel -->
+    <div class="flex-grow flex overflow-hidden">
+        
+        <!-- Left Side: Interactive Image Canvas (65% width) -->
+        <div class="flex-grow flex flex-col relative bg-brand-dark/95 border-r border-brand-border/40 select-none">
+            <!-- Loading Backdrop -->
+            <div x-show="isLoading" class="absolute inset-0 bg-brand-dark/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center gap-4 transition-all" style="display: none;">
+                <div class="w-12 h-12 rounded-full border-4 border-slate-800 border-t-brand-accent animate-spin"></div>
+                <p class="text-sm font-bold text-white tracking-wide" x-text="loadingText"></p>
+            </div>
+
+            <!-- Floating Viewport Controls overlay -->
+            <div class="absolute top-4 left-4 z-40 bg-brand-panel/90 border border-brand-border/80 rounded-xl px-2 py-1.5 shadow-xl flex items-center gap-1.5 backdrop-blur-md">
+                <button id="ctrl-tool-draw" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs transition-all font-semibold"
+                        :class="activeTool === 'draw' ? 'bg-brand-accent text-brand-dark' : 'text-slate-400 hover:text-white hover:bg-slate-800'"
+                        @click="activeTool = 'draw'" title="Draw Lines Mode">
+                    <i class="fa-solid fa-pencil"></i>
+                </button>
+                <button id="ctrl-tool-pan" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs transition-all font-semibold"
+                        :class="activeTool === 'pan' ? 'bg-brand-accent text-brand-dark' : 'text-slate-400 hover:text-white hover:bg-slate-800'"
+                        @click="activeTool = 'pan'" title="Pan & Zoom Mode">
+                    <i class="fa-solid fa-hand"></i>
+                </button>
+                <span class="h-4 w-px bg-brand-border"></span>
+                <button id="ctrl-zoom-in" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors" title="Zoom In">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+                <button id="ctrl-zoom-out" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors" title="Zoom Out">
+                    <i class="fa-solid fa-minus"></i>
+                </button>
+                <button id="ctrl-zoom-reset" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors" title="Reset View">
+                    <i class="fa-solid fa-compress"></i>
+                </button>
+                <span class="h-4 w-px bg-brand-border"></span>
+                <button id="ctrl-delete-selected" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs text-amber-400 hover:bg-amber-500/10 border border-transparent hover:border-amber-500/30 transition-all" title="Delete Selected Line (Press Delete Key)">
+                    <i class="fa-solid fa-eraser text-sm"></i>
+                </button>
+                <button id="ctrl-clear-lines" class="w-8 h-8 rounded-lg flex items-center justify-center text-xs text-red-500 hover:bg-red-500/10 transition-colors" title="Clear All Lines">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+
+            <!-- Canvas Container -->
+            <div class="flex-grow overflow-hidden relative w-full h-full flex items-center justify-center cursor-crosshair" id="canvas-container">
+                <canvas id="canvas-editor" class="block outline-none shadow-2xl transition-all shadow-black/40"></canvas>
+            </div>
+            
+            <!-- Floating Calibration Banner -->
+            <div class="absolute bottom-4 left-4 z-40 bg-brand-panel/90 border border-brand-border/60 rounded-lg px-3 py-1.5 text-[10px] text-slate-400 shadow-md flex items-center gap-2 max-w-sm">
+                <i class="fa-solid fa-circle-info text-brand-accent"></i>
+                <span>Left-click + Drag to draw transverse lines over logs. Endpoints support fine-adjust handles.</span>
+            </div>
+        </div>
+
+        <!-- Right Side: Side Control Panel (35% width, scrollable) -->
+        <div class="w-[35%] shrink-0 flex flex-col bg-brand-panel overflow-y-auto">
+            
+            <!-- Reference Lines & Ground Truths Card -->
+            <div class="p-5 border-b border-brand-border/40">
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4 flex justify-between items-center">
+                    <span><i class="fa-solid fa-list-check text-brand-accent mr-2"></i>Drawn Lines & GTs</span>
+                    <span id="txt-line-counter" class="text-[10px] bg-brand-border text-slate-400 font-semibold px-2 py-0.5 rounded-full border border-brand-border">0 Lines</span>
+                </h3>
+                
+                <div class="overflow-hidden border border-brand-border/60 rounded-xl bg-brand-dark/20 max-h-[220px] overflow-y-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="bg-brand-panel/50 text-slate-400 border-b border-brand-border/40 text-[10px] uppercase tracking-wider">
+                                <th class="p-2.5">Line #</th>
+                                <th class="p-2.5">Coordinates</th>
+                                <th class="p-2.5 text-center" style="width: 90px;">Est / GT</th>
+                                <th class="p-2.5 text-center" style="width: 60px;">Error %</th>
+                                <th class="p-2.5 text-right">Delete</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lines-table-body" class="divide-y divide-brand-border/30">
+                            <!-- Injected dynamically in canvas.js -->
+                            <tr>
+                                <td colspan="4" class="p-6 text-center text-slate-500">No reference lines drawn yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="mt-4 flex justify-end">
+                    <button id="btn-save-lines" class="text-xs bg-slate-800 hover:bg-slate-700 text-brand-accent font-semibold px-4 py-2 rounded-lg border border-brand-accent/20 flex items-center gap-1.5 shadow-md transition-colors">
+                        <i class="fa-solid fa-floppy-disk"></i> Save Reference Lines
+                    </button>
+                </div>
+            </div>
+
+            <!-- Algorithm Configurations Setup -->
+            <div class="p-5 border-b border-brand-border/40 bg-brand-dark/10">
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-brand-highlight"></i>
+                    <span>Math Engine Parameters</span>
+                </h3>
+                
+                <div class="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                        <label class="block text-slate-400 font-semibold mb-1">Color Conversion</label>
+                        <select id="param-gray-conv" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-white outline-none focus:border-brand-accent">
+                            <option value="Standard Gray">Standard Gray</option>
+                            <option value="Red Channel">Red Channel</option>
+                            <option value="LAB L Channel" selected>L Channel LAB</option>
+                            <option value="Red-Blue Contrast">Red-Blue Contrast</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-semibold mb-1">Pre-Filtering</label>
+                        <select id="param-pre-filter" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-white outline-none focus:border-brand-accent">
+                            <option value="None">None</option>
+                            <option value="Bilateral Filter" selected>Bilateral Filter</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-semibold mb-1">Profile Mode</label>
+                        <select id="param-profile-type" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-white outline-none focus:border-brand-accent">
+                            <option value="Single Line">Single Line (1px)</option>
+                            <option value="Band Averaged" selected>Band Averaged</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-semibold mb-1">Band Width ($h$)</label>
+                        <select id="param-band-width" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-white outline-none focus:border-brand-accent">
+                            <option value="1">h = 1px</option>
+                            <option value="5">h = 5px</option>
+                            <option value="30" selected>h = 30px</option>
+                            <option value="100">h = 100px</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-semibold mb-1">Distance Mode</label>
+                        <select id="param-distance-mode" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-white outline-none focus:border-brand-accent">
+                            <option value="Adaptive Fourier" selected>Adaptive Fourier</option>
+                            <option value="Fixed">Fixed Distance (20px)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-semibold mb-1">Peak Method</label>
+                        <select id="param-peak-method" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-white outline-none focus:border-brand-accent">
+                            <option value="centers_of_gravity">Centers of Gravity (Valleys)</option>
+                            <option value="direct_peaks" selected>Direct Peaks</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mt-6 grid grid-cols-2 gap-3">
+                    <button id="btn-grid-search" class="w-full text-xs bg-slate-800 border border-slate-700 hover:border-slate-500 hover:text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all">
+                        <i class="fa-solid fa-gear text-brand-highlight"></i> Run Optimization
+                    </button>
+                    <button id="btn-run-detection" class="w-full text-xs bg-brand-accent hover:bg-emerald-400 text-brand-dark font-extrabold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-md shadow-brand-accent/10 hover:shadow-brand-accent/25 transition-all">
+                        <i class="fa-solid fa-play"></i> Run Detection
+                    </button>
+                </div>
+            </div>
+
+            <!-- Interactive Chart Analysis Panel -->
+            <div class="p-5 flex-grow">
+                <div class="border-b border-brand-border/40 pb-2 mb-4">
+                    <div class="flex gap-4">
+                        <button id="tab-btn-opt" class="text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-brand-accent text-white outline-none">
+                            Top 15 Grid Configs
+                        </button>
+                        <button id="tab-btn-sig" class="text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-transparent text-slate-400 hover:text-white outline-none">
+                            Signal Intensity
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tab content 1: Grid search charts -->
+                <div id="tab-content-opt" class="relative min-h-[300px]">
+                    <div id="chart-opt-ranking" class="w-full h-[320px]"></div>
+                    <div id="empty-opt-chart" class="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 text-xs px-6">
+                        <i class="fa-solid fa-chart-bar text-3xl mb-3"></i>
+                        <p class="font-semibold text-slate-400">Optimization Graph Pending</p>
+                        <p class="mt-1">Add Ground Truths and run optimization to view configuration rankings.</p>
+                    </div>
+                </div>
+
+                <!-- Tab content 2: Profile line signal analysis -->
+                <div id="tab-content-sig" class="hidden relative min-h-[440px]">
+                    <div class="mb-4">
+                        <label class="block text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1">Select Profile Line</label>
+                        <select id="select-chart-line" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-xs text-white outline-none focus:border-brand-accent">
+                            <option value="">-- Choose a Line --</option>
+                        </select>
+                    </div>
+                    
+                    <div id="chart-signal-analysis" class="w-full h-[390px]"></div>
+                    <div id="empty-sig-chart" class="absolute inset-0 top-12 flex flex-col items-center justify-center text-center text-slate-500 text-xs px-6">
+                        <i class="fa-solid fa-wave-square text-3xl mb-3"></i>
+                        <p class="font-semibold text-slate-400">Signal Graph Pending</p>
+                        <p class="mt-1">Choose an active reference line to view raw vs filtered profiles.</p>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+<!-- Import ApexCharts for beautiful graph generation -->
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+<!-- Load Canvas JS and Main Visor App JS -->
+<script src="/static/js/canvas.js?v=2.1"></script>
+<script src="/static/js/app.js?v=2.1"></script>
+{% endblock %}
