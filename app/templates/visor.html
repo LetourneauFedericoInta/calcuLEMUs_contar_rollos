@@ -203,10 +203,7 @@
                     </div>
                 </div>
 
-                <div class="mt-6 grid grid-cols-2 gap-3">
-                    <button id="btn-grid-search" class="w-full text-xs bg-slate-800 border border-slate-700 hover:border-slate-500 hover:text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all">
-                        <i class="fa-solid fa-gear text-brand-highlight"></i> Run Optimization
-                    </button>
+                <div class="mt-6">
                     <button id="btn-run-detection" class="w-full text-xs bg-brand-accent hover:bg-emerald-400 text-brand-dark font-extrabold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-md shadow-brand-accent/10 hover:shadow-brand-accent/25 transition-all">
                         <i class="fa-solid fa-play"></i> Run Detection
                     </button>
@@ -216,28 +213,14 @@
             <!-- Interactive Chart Analysis Panel -->
             <div class="p-5 flex-grow">
                 <div class="border-b border-brand-border/40 pb-2 mb-4">
-                    <div class="flex gap-4">
-                        <button id="tab-btn-opt" class="text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-brand-accent text-white outline-none">
-                            Top 15 Grid Configs
-                        </button>
-                        <button id="tab-btn-sig" class="text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-transparent text-slate-400 hover:text-white outline-none">
-                            Signal Intensity
-                        </button>
-                    </div>
+                    <h3 class="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
+                        <i class="fa-solid fa-wave-square text-brand-accent"></i>
+                        <span>Signal Intensity Analysis</span>
+                    </h3>
                 </div>
 
-                <!-- Tab content 1: Grid search charts -->
-                <div id="tab-content-opt" class="relative min-h-[300px]">
-                    <div id="chart-opt-ranking" class="w-full h-[320px]"></div>
-                    <div id="empty-opt-chart" class="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 text-xs px-6">
-                        <i class="fa-solid fa-chart-bar text-3xl mb-3"></i>
-                        <p class="font-semibold text-slate-400">Optimization Graph Pending</p>
-                        <p class="mt-1">Add Ground Truths and run optimization to view configuration rankings.</p>
-                    </div>
-                </div>
-
-                <!-- Tab content 2: Profile line signal analysis -->
-                <div id="tab-content-sig" class="hidden relative min-h-[440px]">
+                <!-- Profile line signal analysis -->
+                <div id="tab-content-sig" class="relative min-h-[440px]">
                     <div class="mb-4">
                         <label class="block text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1">Select Profile Line</label>
                         <select id="select-chart-line" class="w-full bg-brand-dark border border-brand-border rounded-lg p-2 text-xs text-white outline-none focus:border-brand-accent">

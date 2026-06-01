@@ -19,6 +19,37 @@ def safe_imread(filepath: str) -> np.ndarray:
         logger.error(f"Failed to read image safely from {filepath}: {e}")
         return None
 
+def process_gray_conversion(img: np.ndarray, conversion: str) -> np.ndarray:
+    """
+    Converts BGR image into target grayscale channels:
+    - "Standard Gray": OpenCV Standard BGR2GRAY
+    - "Red Channel": Channel index 2 of BGR
+    - "LAB L Channel": L channel of CIELAB color space
+    - "Red-Blue Contrast": Normal contrast enhancement between Red and Blue channels
+    """
+    if conversion == "Standard Gray":
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    elif conversion == "Red Channel":
+        return img[:, :, 2]
+    elif conversion == "LAB L Channel":
+        return cv2.cvtColor(img, cv2.COLOR_BGR2Lab)[:, :, 0]
+    elif conversion == "Red-Blue Contrast":
+        # (Red - Blue) contrast with clipping to prevent underflow/overflow
+        r = img[:, :, 2].astype(np.int16)
+        b = img[:, :, 0].astype(np.int16)
+        contrast = np.clip(r - b + 128, 0, 255).astype(np.uint8)
+        return contrast
+    else:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+def apply_pre_filter(img: np.ndarray, pre_filter: str) -> np.ndarray:
+    """
+    Applies target pre-filter (None vs Bilateral Filter).
+    """
+    if pre_filter == "Bilateral Filter":
+        return cv2.bilateralFilter(img, d=5, sigmaColor=75, sigmaSpace=75)
+    return img
+
 def extract_exif_metadata(image_path: str) -> dict:
     """
     Extracts GPS coordinates (Latitude, Longitude, Altitude) from image EXIF headers.

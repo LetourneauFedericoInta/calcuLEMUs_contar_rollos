@@ -277,123 +277,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('btn-run-detection').addEventListener('click', () => runDetection(false));
 
-    // Network request: Run combinatoric Grid Search Optimization
-    document.getElementById('btn-grid-search').addEventListener('click', async () => {
-        if (editor.lines.length === 0) {
-            alert("Please draw at least one reference line and fill in Ground Truth counts before optimizing!");
-            return;
-        }
-
-        // Verify if all lines have non-zero Ground Truths to prevent flat comparisons
-        const missingGt = editor.lines.some(l => l.ground_truth === 0);
-        if (missingGt && !confirm("Some drawn lines have a Ground Truth of 0. Optimize anyway?")) {
-            return;
-        }
-
-        showLoading(true, "Evaluating 128 mathematical permutations...");
-        try {
-            const response = await fetch(`/api/image/${imageId}/optimize`, { method: 'POST' });
-            const result = await response.json();
-            
-            if (result.success && result.top_configs) {
-                // Update workspace status state
-                const alpineState = Alpine.$data(visorEl);
-                alpineState.status = 'Optimized';
-                
-                // Load best configurations directly into active parameter selectors
-                const best = result.best_config;
-                document.getElementById('param-gray-conv').value = best.gray_conversion;
-                document.getElementById('param-pre-filter').value = best.pre_filter;
-                document.getElementById('param-profile-type').value = best.profile_type;
-                document.getElementById('param-band-width').value = String(best.band_width);
-                document.getElementById('param-distance-mode').value = best.distance_mode;
-                document.getElementById('param-peak-method').value = best.detection_method;
-                
-                // Render chart
-                renderOptimizationChart(result.top_configs);
-                
-                // Immediately run detection with the newly loaded optimal parameters
-                await runDetection(false);
-                
-                alert(`Optimization complete!\nOptimal Setup: ${best.gray_conversion} | ${best.profile_type} h=${best.band_width} | ${best.detection_method}\nWAPE Accuracy: ${(1.0 - best.wape)*100.0}%`);
-            }
-        } catch (err) {
-            console.error("Optimization failed:", err);
-            alert("Optimization failed: Check server console.");
-        } finally {
-            showLoading(false);
-        }
-    });
-
-    // Render horizontal top 15 configs ranking bar chart
-    const renderOptimizationChart = (configs) => {
-        document.getElementById('empty-opt-chart').style.display = 'none';
-        
-        const categories = configs.map((c, i) => `#${i+1}: ${c.gray_conversion} | h=${c.band_width} | ${c.detection_method}`);
-        const errorsData = configs.map(c => Math.round(c.wape * 1000) / 10); // WAPE error %
-        const stdDevData = configs.map(c => Math.round(c.std_err * 10) / 10); // Std dev of line errors
-        
-        const options = {
-            series: [{
-                name: 'WAPE Error %',
-                data: errorsData
-            }],
-            chart: {
-                type: 'bar',
-                height: 320,
-                toolbar: { show: false },
-                background: 'transparent',
-                foreColor: '#94a3b8'
-            },
-            theme: { mode: 'dark' },
-            colors: ['#10b981'], // Accent emerald green
-            plotOptions: {
-                bar: {
-                    horizontal: true,
-                    barHeight: '65%',
-                    borderRadius: 4
-                }
-            },
-            dataLabels: {
-                enabled: true,
-                formatter: (val) => `${val}%`,
-                style: { colors: ['#ffffff'], fontSize: '10px' }
-            },
-            xaxis: {
-                categories: categories,
-                labels: { style: { fontFamily: 'Outfit' } },
-                title: { text: 'Relative Error (WAPE %)', style: { fontFamily: 'Outfit' } }
-            },
-            yaxis: {
-                labels: { 
-                    maxWidth: 180,
-                    style: { fontFamily: 'Outfit', fontSize: '9px' } 
-                }
-            },
-            grid: {
-                borderColor: '#1f294d',
-                strokeDashArray: 4
-            },
-            tooltip: {
-                shared: true,
-                theme: 'dark',
-                y: {
-                    formatter: (val, opts) => {
-                        const index = opts.dataPointIndex;
-                        const cfg = configs[index];
-                        return `${val}% (MAE: ${cfg.mae.toFixed(1)} | Std Dev: ${stdDevData[index]}px)`;
-                    }
-                }
-            }
-        };
-
-        if (optChartInstance) {
-            optChartInstance.destroy();
-        }
-        
-        optChartInstance = new ApexCharts(document.getElementById('chart-opt-ranking'), options);
-        optChartInstance.render();
-    };
+    // Grid Search Optimization is removed to simplify system performance and avoid Render CPU timeouts
 
     // Network request: Fetch line profile and plot it
     const loadSignalProfile = async (lineIdx) => {
@@ -545,25 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
         signalChartInstance.render();
     };
 
-    // Chart toggle tabs behavior
-    const tabBtnOpt = document.getElementById('tab-btn-opt');
-    const tabBtnSig = document.getElementById('tab-btn-sig');
-    const tabContentOpt = document.getElementById('tab-content-opt');
-    const tabContentSig = document.getElementById('tab-content-sig');
-
-    tabBtnOpt.addEventListener('click', () => {
-        tabBtnOpt.className = "text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-brand-accent text-white outline-none";
-        tabBtnSig.className = "text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-transparent text-slate-400 hover:text-white outline-none";
-        tabContentOpt.classList.remove('hidden');
-        tabContentSig.classList.add('hidden');
-    });
-
-    tabBtnSig.addEventListener('click', () => {
-        tabBtnSig.className = "text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-brand-accent text-white outline-none";
-        tabBtnOpt.className = "text-xs font-bold uppercase tracking-wider pb-2 border-b-2 border-transparent text-slate-400 hover:text-white outline-none";
-        tabContentSig.classList.remove('hidden');
-        tabContentOpt.classList.add('hidden');
-    });
+    // Tabs controllers are removed as only the Signal Intensity chart remains active
 
     // Dropdown signal line select event
     document.getElementById('select-chart-line').addEventListener('change', (e) => {

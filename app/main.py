@@ -2,6 +2,8 @@ import os
 import cv2
 import json
 import base64
+import shutil
+import logging
 import numpy as np
 from datetime import datetime
 from fastapi import FastAPI, Depends, Request, Form, UploadFile, File, HTTPException, status
@@ -11,10 +13,11 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 import folium
 
-from .database import engine, get_db, Base
+from .database import engine, get_db, Base, SessionLocal
 from .models import ImageRecord, LineRecord, OptimizationConfig
-from .core import extract_exif_metadata, extraer_perfil_banda, calcular_distancia_fourier, detectar_picos, safe_imread
-from .optimization import GridSearchEngine
+from .core import extract_exif_metadata, extraer_perfil_banda, calcular_distancia_fourier, detectar_picos, safe_imread, process_gray_conversion, apply_pre_filter
+
+logger = logging.getLogger("main")
 
 # Create the DB tables on launch
 Base.metadata.create_all(bind=engine)
@@ -30,6 +33,82 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 templates = Jinja2Templates(directory="app/templates")
+
+@app.on_event("startup")
+def seed_database():
+    """
+    Startup event to copy the default example image, seed it in the database with
+    pre-calculated coordinates, and purge broken local database entries.
+    """
+    db = SessionLocal()
+    try:
+        # 1. Copy the default example image to uploads folder if not exists
+        static_example = "app/static/example_image.jpg"
+        uploads_example = os.path.join(UPLOAD_DIR, "example_image.jpg")
+        if os.path.exists(static_example):
+            if not os.path.exists(uploads_example):
+                logger.info("Copying static example image to uploads directory...")
+                shutil.copy(static_example, uploads_example)
+        
+        # 2. Purge broken database entries pointing to non-existent files (e.g. local paths on Render)
+        images = db.query(ImageRecord).all()
+        for img in images:
+            if not os.path.exists(img.filepath):
+                logger.info(f"Removing broken legacy image record: {img.filename} (file not found)")
+                db.delete(img)
+        db.commit()
+        
+        # 3. Seed example_image.jpg if it doesn't exist in the database
+        example_record = db.query(ImageRecord).filter(ImageRecord.filename == "example_image.jpg").first()
+        if not example_record and os.path.exists(uploads_example):
+            logger.info("Seeding default example image in database...")
+            example_record = ImageRecord(
+                filename="example_image.jpg",
+                filepath=uploads_example,
+                gps_lat=-34.8152,
+                gps_lon=-58.4619,
+                gps_alt=100.0,
+                status="Optimized",
+                total_detected=49,
+                total_gt=51
+            )
+            db.add(example_record)
+            db.commit()
+            db.refresh(example_record)
+            
+            # Seed reference line coordinates for example_image.jpg
+            line_record = LineRecord(
+                image_id=example_record.id,
+                p1_x=293.4353,
+                p1_y=346.5547,
+                p2_x=1415.6653,
+                p2_y=470.7497,
+                ground_truth=51,
+                detected_count=49
+            )
+            db.add(line_record)
+            
+            # Seed active configuration parameters so detection doesn't fail
+            config_record = OptimizationConfig(
+                image_id=example_record.id,
+                gray_conversion="LAB L Channel",
+                profile_type="Band Averaged",
+                band_width=30,
+                pre_filter="Bilateral Filter",
+                distance_mode="Adaptive Fourier",
+                detection_method="direct_peaks",
+                wape=0.039,
+                mae=2.0
+            )
+            db.add(config_record)
+            db.commit()
+            logger.info("Example image and lines seeded successfully!")
+            
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Startup seeding failed: {e}")
+    finally:
+        db.close()
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
@@ -254,67 +333,7 @@ async def save_lines(image_id: int, request: Request, db: Session = Depends(get_
         logger.error(f"Failed to save lines: {e}")
         return JSONResponse(status_code=400, content={"success": False, "detail": str(e)})
 
-@app.post("/api/image/{image_id}/optimize")
-def optimize_image(image_id: int, db: Session = Depends(get_db)):
-    """
-    Runs background Grid Search Optimization testing combinations
-    against active lines and Ground Truth values.
-    Saves the absolute best parameter configuration.
-    """
-    img_record = db.query(ImageRecord).filter(ImageRecord.id == image_id).first()
-    if not img_record:
-        raise HTTPException(status_code=404, detail="Image not found")
-        
-    lines = db.query(LineRecord).filter(LineRecord.image_id == image_id).all()
-    if not lines:
-        raise HTTPException(status_code=400, detail="Cannot optimize without reference lines and Ground Truths")
-        
-    # Read raw orthomosaic
-    if not os.path.exists(img_record.filepath):
-        raise HTTPException(status_code=404, detail="Image file not found on server disk")
-        
-    img_bgr = safe_imread(img_record.filepath)
-    if img_bgr is None:
-        raise HTTPException(status_code=500, detail="Could not decode image file")
-        
-    lines_list = [{
-        "p1_x": l.p1_x, "p1_y": l.p1_y,
-        "p2_x": l.p2_x, "p2_y": l.p2_y,
-        "ground_truth": l.ground_truth
-    } for l in lines]
-    
-    # Run optimization (128 combinations)
-    top_configs = GridSearchEngine.run_grid_search(img_bgr, lines_list)
-    
-    if not top_configs:
-        raise HTTPException(status_code=500, detail="Grid search returned empty set")
-        
-    best = top_configs[0]
-    
-    # Persist or update the optimal configuration settings
-    opt_cfg = db.query(OptimizationConfig).filter(OptimizationConfig.image_id == image_id).first()
-    if not opt_cfg:
-        opt_cfg = OptimizationConfig(image_id=image_id)
-        db.add(opt_cfg)
-        
-    opt_cfg.gray_conversion = best["gray_conversion"]
-    opt_cfg.pre_filter = best["pre_filter"]
-    opt_cfg.profile_type = best["profile_type"]
-    opt_cfg.band_width = best["band_width"]
-    opt_cfg.distance_mode = best["distance_mode"]
-    opt_cfg.detection_method = best["detection_method"]
-    opt_cfg.wape = best["wape"]
-    opt_cfg.mae = best["mae"]
-    
-    # Set image status
-    img_record.status = "Optimized"
-    db.commit()
-    
-    return {
-        "success": True,
-        "best_config": best,
-        "top_configs": top_configs
-    }
+# Optimization endpoint removed to simplify codebase and prevent Render CPU timeouts
 
 @app.post("/api/image/{image_id}/run_detection")
 async def run_detection(
@@ -351,8 +370,8 @@ async def run_detection(
         raise HTTPException(status_code=500, detail="Failed to load image file")
         
     # Pre-process image based on conversion and filter parameters
-    gray = GridSearchEngine.process_gray_conversion(img_bgr, gray_conversion)
-    filtered = GridSearchEngine.apply_pre_filter(gray, pre_filter)
+    gray = process_gray_conversion(img_bgr, gray_conversion)
+    filtered = apply_pre_filter(gray, pre_filter)
     
     total_detected = 0
     detected_lines_response = []
@@ -453,12 +472,12 @@ def get_line_profile(
     p2 = (l.p2_x, l.p2_y)
     
     # Extract raw intensity (Standard gray without filters)
-    raw_gray = GridSearchEngine.process_gray_conversion(img_bgr, "Standard Gray")
+    raw_gray = process_gray_conversion(img_bgr, "Standard Gray")
     raw_profile = extraer_perfil_banda(raw_gray, p1, p2, h=1)
     
     # Extract processed intensity profile
-    gray = GridSearchEngine.process_gray_conversion(img_bgr, gc)
-    filtered = GridSearchEngine.apply_pre_filter(gray, pf)
+    gray = process_gray_conversion(img_bgr, gc)
+    filtered = apply_pre_filter(gray, pf)
     
     h = bw if pt == "Band Averaged" else 1
     processed_profile = extraer_perfil_banda(filtered, p1, p2, h)
@@ -524,8 +543,8 @@ def export_html_report(image_id: int, db: Session = Depends(get_db)):
     
     # Re-run detection to gather peak coordinates for drawing overlay
     if opt_cfg:
-        gray = GridSearchEngine.process_gray_conversion(img_bgr, opt_cfg.gray_conversion)
-        filtered = GridSearchEngine.apply_pre_filter(gray, opt_cfg.pre_filter)
+        gray = process_gray_conversion(img_bgr, opt_cfg.gray_conversion)
+        filtered = apply_pre_filter(gray, opt_cfg.pre_filter)
         h_band = opt_cfg.band_width if opt_cfg.profile_type == "Band Averaged" else 1
         
         for l in lines:

@@ -47,8 +47,8 @@ class OptimizationConfig(Base):
     pre_filter = Column(String, nullable=False)         # "None", "Bilateral Filter"
     distance_mode = Column(String, nullable=False)       # "Adaptive Fourier", "Fixed"
     detection_method = Column(String, nullable=False)    # "centers_of_gravity", "direct_peaks"
-    wape = Column(Float, nullable=False)
-    mae = Column(Float, nullable=False)
+    wape = Column(Float, nullable=True)
+    mae = Column(Float, nullable=True)
 
     # Relationships
     image = relationship("ImageRecord", back_populates="opt_config")
